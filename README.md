@@ -324,7 +324,34 @@ req #71: OK served by pod=inventory-6ff6b7d8ff-vrdb2
 
 ## Screenshots
 
-<!-- Add screenshots of the terminal runs here, e.g. ![deploy](evidence/screenshots/deploy.png) -->
+**Docker Desktop: Kubernetes enabled and running (kind, 1 node, v1.36.1)**
+
+![Docker Desktop: Kubernetes enabled and running (kind, 1 node, v1.36.1)](evidence/screenshots/01-docker-desktop-kubernetes.png)
+
+**Locally built images `inventory:1.0` and `inventory-client:1.0`**
+
+![Locally built images `inventory:1.0` and `inventory-client:1.0`](evidence/screenshots/02-docker-images.png)
+
+**`kubectl` context `docker-desktop`, node `Ready`, and the demo script building the images**
+
+![`kubectl` context `docker-desktop`, node `Ready`, and the demo script building the images](evidence/screenshots/03-cluster-ready-and-build.png)
+
+**1. Deploy: both Inventory Pods and the client Running, Service ClusterIP, and endpoints listing both Pod IPs**
+
+![1. Deploy: both Inventory Pods and the client Running, Service ClusterIP, and endpoints listing both Pod IPs](evidence/screenshots/04-deploy-pods-service-endpoints.png)
+
+**1. Client and per-Pod server logs showing both replicas receiving requests; 2. one Pod `0/1` (not Ready) and removed from the endpoints**
+
+![1. Client and per-Pod server logs showing both replicas receiving requests; 2. one Pod `0/1` (not Ready) and removed from the endpoints](evidence/screenshots/05-both-replicas-and-readiness-failure.png)
+
+**2. Client traffic only on the ready Pod, readiness restored (both `1/1`, both endpoints), then both Pods serving again; start of Pod deletion**
+
+![2. Client traffic only on the ready Pod, readiness restored (both `1/1`, both endpoints), then both Pods serving again; start of Pod deletion](evidence/screenshots/06-readiness-recovery.png)
+
+**3. Pod deleted and replaced by a new Pod with a different name; Service name and ClusterIP unchanged; client keeps working**
+
+![3. Pod deleted and replaced by a new Pod with a different name; Service name and ClusterIP unchanged; client keeps working](evidence/screenshots/07-pod-deletion-replacement.png)
+
 
 ## Reflection
 
