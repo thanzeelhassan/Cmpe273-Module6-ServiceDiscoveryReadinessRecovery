@@ -73,6 +73,8 @@ CLUSTER=minikube ./scripts/demo.sh      # or kind / docker-desktop
 
 ## Demonstrations
 
+All output below was captured on **Docker Desktop Kubernetes** (single node `desktop-control-plane`) by running `CLUSTER=docker-desktop ./scripts/demo.sh`. The raw output is saved in the `evidence/` folder.
+
 ### 1. Deployment, Service, and load across replicas
 
 Commands:
@@ -85,9 +87,78 @@ kubectl logs deploy/client --tail=12
 
 What to look for: both Pods `Running` and `1/1 Ready`; the client log lines alternate between the two different `pod=` names, proving requests reach more than one replica through the Service name.
 
-**Evidence:** see [`evidence/1-deploy.txt`](evidence/1-deploy.txt)
+**What the output shows**
 
-<!-- Paste screenshot here, e.g. ![deploy](evidence/1-deploy.png) -->
+- Both Inventory Pods are `Running` and `1/1` Ready (`inventory-6ff6b7d8ff-84mc8` and `inventory-6ff6b7d8ff-vrdb2`).
+- The Service `inventory-service` (ClusterIP `10.96.189.124`, port 80) lists **both** Pod IPs as endpoints: `10.244.0.5:8080,10.244.0.7:8080`.
+- The client log shows responses from **both** replicas (`...84mc8` and `...vrdb2`), and each Pod's own server log shows `GET /items` requests coming from the client Pod (`10.244.0.6`). So requests reach more than one replica, through the Service name.
+- The first 4 client requests failed with `Connection refused`. The client started at the same moment as the Inventory Pods, so the Service had no Ready endpoints yet. Once the Pods passed readiness, requests succeeded (req #5 onward), which is the readiness behavior working as intended.
+
+<details>
+<summary>Full terminal output (<code>evidence/1-deploy.txt</code>)</summary>
+
+```text
+=== 1. Deploy ===
+$ kubectl apply -f k8s/
+deployment.apps/client created
+deployment.apps/inventory created
+service/inventory-service created
+
+$ kubectl rollout status deployment/inventory --timeout=90s
+Waiting for deployment "inventory" rollout to finish: 0 of 2 updated replicas are available...
+Waiting for deployment "inventory" rollout to finish: 1 of 2 updated replicas are available...
+deployment "inventory" successfully rolled out
+
+$ kubectl rollout status deployment/client --timeout=90s
+deployment "client" successfully rolled out
+
+$ kubectl get pods -o wide
+NAME                         READY   STATUS    RESTARTS   AGE   IP           NODE                    NOMINATED NODE   READINESS GATES
+client-6b8cbc7c7b-rpl96      1/1     Running   0          6s    10.244.0.6   desktop-control-plane   <none>           <none>
+inventory-6ff6b7d8ff-84mc8   1/1     Running   0          6s    10.244.0.7   desktop-control-plane   <none>           <none>
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          6s    10.244.0.5   desktop-control-plane   <none>           <none>
+
+$ kubectl get svc inventory-service
+NAME                TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+inventory-service   ClusterIP   10.96.189.124   <none>        80/TCP    6s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS                         AGE
+inventory-service   10.244.0.5:8080,10.244.0.7:8080   6s
+
+
+=== Client logs: requests reaching MORE THAN ONE replica (via Service name) ===
+$ kubectl logs deploy/client --tail=12
+client starting, target = http://inventory-service:80/items
+req #1: ERROR <urlopen error [Errno 111] Connection refused>
+req #2: ERROR <urlopen error [Errno 111] Connection refused>
+req #3: ERROR <urlopen error [Errno 111] Connection refused>
+req #4: ERROR <urlopen error [Errno 111] Connection refused>
+req #5: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #6: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #7: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #8: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #9: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #10: OK served by pod=inventory-6ff6b7d8ff-84mc8
+
+
+=== Per-Pod server logs (both replicas receive requests) ===
+--- pod/inventory-6ff6b7d8ff-84mc8
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.6 "GET /items HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.1 "GET /health HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.6 "GET /items HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+--- pod/inventory-6ff6b7d8ff-vrdb2
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.6 "GET /items HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.1 "GET /health HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.6 "GET /items HTTP/1.1" 200 -
+```
+
+</details>
 
 ### 2. Readiness failure and recovery
 
@@ -110,9 +181,74 @@ kubectl logs deploy/client --tail=10       # both Pods serve again
 
 Observed: the unready Pod is **still running**, it is **removed from the Service endpoints** and stops receiving normal traffic, and the **other Pod keeps serving**. After restoring, it rejoins the endpoints.
 
-**Evidence:** see [`evidence/2-readiness.txt`](evidence/2-readiness.txt)
+**What the output shows**
 
-<!-- Paste screenshot here -->
+- After `touch /tmp/not-ready`, Pod `inventory-6ff6b7d8ff-84mc8` shows `0/1 Running`: it is **still running** but **not Ready**.
+- The Service endpoints shrink to only the ready Pod: `10.244.0.5:8080`. The unready Pod was removed from the Service.
+- Once the probe failure was registered, every client request was served by the other Pod (`...vrdb2`, requests #14 to #19). One response (#13) still came from the unready Pod; it fell inside the 3-second probe interval right after the flag was created, before the failed probe had been recorded.
+- After `rm /tmp/not-ready`, the Pod returns to `1/1` Ready, both IPs are back in the endpoints, and the client logs show `...84mc8` serving traffic again (#26, #28 to #32).
+
+<details>
+<summary>Full terminal output (<code>evidence/2-readiness.txt</code>)</summary>
+
+```text
+=== 2. Readiness test ===
+Pod chosen to fail readiness: inventory-6ff6b7d8ff-84mc8
+
+$ kubectl exec inventory-6ff6b7d8ff-84mc8 -- touch /tmp/not-ready
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-84mc8   0/1     Running   0          20s
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          20s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS         AGE
+inventory-service   10.244.0.5:8080   20s
+
+
+=== Client logs now only show the READY pod ===
+$ kubectl logs deploy/client --tail=8
+req #12: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #13: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #14: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #15: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #16: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #17: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #18: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #19: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+
+
+=== Restore readiness ===
+$ kubectl exec inventory-6ff6b7d8ff-84mc8 -- rm /tmp/not-ready
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-84mc8   1/1     Running   0          28s
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          28s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS                         AGE
+inventory-service   10.244.0.5:8080,10.244.0.7:8080   28s
+
+
+=== Client logs: both pods serving again ===
+$ kubectl logs deploy/client --tail=10
+req #23: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #24: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #25: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #26: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #27: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #28: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #29: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #30: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #31: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #32: OK served by pod=inventory-6ff6b7d8ff-84mc8
+```
+
+</details>
 
 ### 3. Pod deletion and replacement
 
@@ -126,9 +262,69 @@ kubectl logs deploy/client --tail=10       # client keeps working
 
 Observed: the Deployment's ReplicaSet creates a replacement Pod with a new name/identity, the Service name (`inventory-service`) and ClusterIP are unchanged, and the client continues communicating through the Service without any configuration change.
 
-**Evidence:** see [`evidence/3-pod-recovery.txt`](evidence/3-pod-recovery.txt)
+**What the output shows**
 
-<!-- Paste screenshot here -->
+- Deleted `inventory-6ff6b7d8ff-84mc8`. Kubernetes immediately created a replacement Pod, `inventory-6ff6b7d8ff-x6t68`, a **different name/identity** with a new IP (`10.244.0.8`, replacing `10.244.0.7`).
+- The **Service name and ClusterIP are unchanged** (`inventory-service`, `10.96.189.124`); its endpoints updated automatically to `10.244.0.5:8080,10.244.0.8:8080`.
+- The client was not touched or reconfigured and kept working: requests #62 to #71 were served by `...vrdb2` and the new `...x6t68` through the same Service name.
+
+<details>
+<summary>Full terminal output (<code>evidence/3-pod-recovery.txt</code>)</summary>
+
+```text
+=== 3. Pod failure and recovery ===
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-84mc8   1/1     Running   0          34s
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          34s
+
+Deleting pod: inventory-6ff6b7d8ff-84mc8
+
+$ kubectl delete pod inventory-6ff6b7d8ff-84mc8
+pod "inventory-6ff6b7d8ff-84mc8" deleted from default namespace
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          67s
+inventory-6ff6b7d8ff-x6t68   1/1     Running   0          33s
+
+$ kubectl rollout status deployment/inventory --timeout=90s
+deployment "inventory" successfully rolled out
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          67s
+inventory-6ff6b7d8ff-x6t68   1/1     Running   0          33s
+
+$ kubectl get svc inventory-service
+NAME                TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+inventory-service   ClusterIP   10.96.189.124   <none>        80/TCP    67s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS                         AGE
+inventory-service   10.244.0.5:8080,10.244.0.8:8080   67s
+
+
+=== Client keeps working through the unchanged Service name ===
+$ kubectl logs deploy/client --tail=10
+req #62: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #63: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #64: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #65: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #66: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #67: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #68: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #69: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #70: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #71: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+```
+
+</details>
+
+## Screenshots
+
+<!-- Add screenshots of the terminal runs here, e.g. ![deploy](evidence/screenshots/deploy.png) -->
 
 ## Reflection
 
