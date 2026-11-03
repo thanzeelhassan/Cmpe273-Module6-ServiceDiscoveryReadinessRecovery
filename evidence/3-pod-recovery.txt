@@ -1,0 +1,48 @@
+
+=== 3. Pod failure and recovery ===
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-84mc8   1/1     Running   0          34s
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          34s
+
+Deleting pod: inventory-6ff6b7d8ff-84mc8
+
+$ kubectl delete pod inventory-6ff6b7d8ff-84mc8
+pod "inventory-6ff6b7d8ff-84mc8" deleted from default namespace
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          67s
+inventory-6ff6b7d8ff-x6t68   1/1     Running   0          33s
+
+$ kubectl rollout status deployment/inventory --timeout=90s
+deployment "inventory" successfully rolled out
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          67s
+inventory-6ff6b7d8ff-x6t68   1/1     Running   0          33s
+
+$ kubectl get svc inventory-service
+NAME                TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+inventory-service   ClusterIP   10.96.189.124   <none>        80/TCP    67s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS                         AGE
+inventory-service   10.244.0.5:8080,10.244.0.8:8080   67s
+
+
+=== Client keeps working through the unchanged Service name ===
+$ kubectl logs deploy/client --tail=10
+req #62: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #63: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #64: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #65: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #66: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #67: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #68: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #69: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #70: OK served by pod=inventory-6ff6b7d8ff-x6t68
+req #71: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+

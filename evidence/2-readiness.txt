@@ -1,0 +1,56 @@
+
+=== 2. Readiness test ===
+Pod chosen to fail readiness: inventory-6ff6b7d8ff-84mc8
+
+$ kubectl exec inventory-6ff6b7d8ff-84mc8 -- touch /tmp/not-ready
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-84mc8   0/1     Running   0          20s
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          20s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS         AGE
+inventory-service   10.244.0.5:8080   20s
+
+
+=== Client logs now only show the READY pod ===
+$ kubectl logs deploy/client --tail=8
+req #12: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #13: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #14: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #15: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #16: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #17: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #18: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #19: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+
+
+=== Restore readiness ===
+$ kubectl exec inventory-6ff6b7d8ff-84mc8 -- rm /tmp/not-ready
+
+$ kubectl get pods -l app=inventory
+NAME                         READY   STATUS    RESTARTS   AGE
+inventory-6ff6b7d8ff-84mc8   1/1     Running   0          28s
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          28s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS                         AGE
+inventory-service   10.244.0.5:8080,10.244.0.7:8080   28s
+
+
+=== Client logs: both pods serving again ===
+$ kubectl logs deploy/client --tail=10
+req #23: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #24: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #25: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #26: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #27: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #28: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #29: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #30: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #31: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #32: OK served by pod=inventory-6ff6b7d8ff-84mc8
+

@@ -1,0 +1,59 @@
+
+=== 1. Deploy ===
+$ kubectl apply -f k8s/
+deployment.apps/client created
+deployment.apps/inventory created
+service/inventory-service created
+
+$ kubectl rollout status deployment/inventory --timeout=90s
+Waiting for deployment "inventory" rollout to finish: 0 of 2 updated replicas are available...
+Waiting for deployment "inventory" rollout to finish: 1 of 2 updated replicas are available...
+deployment "inventory" successfully rolled out
+
+$ kubectl rollout status deployment/client --timeout=90s
+deployment "client" successfully rolled out
+
+$ kubectl get pods -o wide
+NAME                         READY   STATUS    RESTARTS   AGE   IP           NODE                    NOMINATED NODE   READINESS GATES
+client-6b8cbc7c7b-rpl96      1/1     Running   0          6s    10.244.0.6   desktop-control-plane   <none>           <none>
+inventory-6ff6b7d8ff-84mc8   1/1     Running   0          6s    10.244.0.7   desktop-control-plane   <none>           <none>
+inventory-6ff6b7d8ff-vrdb2   1/1     Running   0          6s    10.244.0.5   desktop-control-plane   <none>           <none>
+
+$ kubectl get svc inventory-service
+NAME                TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+inventory-service   ClusterIP   10.96.189.124   <none>        80/TCP    6s
+
+$ kubectl get endpoints inventory-service
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                ENDPOINTS                         AGE
+inventory-service   10.244.0.5:8080,10.244.0.7:8080   6s
+
+
+=== Client logs: requests reaching MORE THAN ONE replica (via Service name) ===
+$ kubectl logs deploy/client --tail=12
+client starting, target = http://inventory-service:80/items
+req #1: ERROR <urlopen error [Errno 111] Connection refused>
+req #2: ERROR <urlopen error [Errno 111] Connection refused>
+req #3: ERROR <urlopen error [Errno 111] Connection refused>
+req #4: ERROR <urlopen error [Errno 111] Connection refused>
+req #5: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #6: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #7: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #8: OK served by pod=inventory-6ff6b7d8ff-84mc8
+req #9: OK served by pod=inventory-6ff6b7d8ff-vrdb2
+req #10: OK served by pod=inventory-6ff6b7d8ff-84mc8
+
+
+=== Per-Pod server logs (both replicas receive requests) ===
+--- pod/inventory-6ff6b7d8ff-84mc8
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.6 "GET /items HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.1 "GET /health HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.6 "GET /items HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-84mc8] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+--- pod/inventory-6ff6b7d8ff-vrdb2
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.6 "GET /items HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.1 "GET /health HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.1 "GET /ready HTTP/1.1" 200 -
+[inventory-6ff6b7d8ff-vrdb2] 10.244.0.6 "GET /items HTTP/1.1" 200 -
